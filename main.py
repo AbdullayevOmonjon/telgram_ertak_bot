@@ -267,3 +267,29 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+import os
+from aiohttp import web
+
+# Render port xatoligini bermasligi uchun soxta veb-server yaratamiz
+async def handle(request):
+    return web.Response(text="Bot is running!")
+
+app = web.Application()
+app.router.add_get('/', handle)
+
+# Botni ishga tushirish funksiyasini biroz o'zgartiramiz
+async def on_startup(dispatcher):
+    import asyncio
+    # Botni alohida fonda ishga tushiramiz
+    asyncio.create_task(dispatcher.start_polling(bot))
+
+if __name__ == '__main__':
+    # Render beradigan portni aniqlaymiz, bo'lmasa 8080 portni oladi
+    port = int(os.environ.get("PORT", 8080))
+    
+    # aiogram botini start_polling orqali emas, veb-server bilan birga yuritamiz
+    from aiogram import Dispatcher
+    dp = Dispatcher() # O'zingizning dp obyektizdan foydalaning
+    
+    # Bu kod ham veb-portni ochadi, ham botni orqa fonda ishga tushiradi
+    web.run_app(app, host='0.0.0.0', port=port)
