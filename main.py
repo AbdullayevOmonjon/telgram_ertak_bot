@@ -238,58 +238,33 @@ async def admin_prepare_pdf(call: types.CallbackQuery, state: FSMContext):
     await call.message.answer(f"📁 Iltimos, **{client_name}** uchun tayyorlangan ertak kitobining **PDF faylini** botga yuklang:")
     await call.answer()
 
-@dp.message(AdminJavob.pdf_kutish, F.document)
-async def admin_send_file(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    client_id = data['target_client_id']
-    document = message.document.file_id
-    
-    user_reorder_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✨ Yana ertak buyurtma qilish", callback_data="reorder")]
-    ])
-    
-    try:
-        await bot.send_document(
-            chat_id=client_id, 
-            document=document, 
-            caption="🎉 Ura! To'lovingiz qabul qilindi. Siz uchun maxsus yozilgan, bolajoningiz qahramonga aylangan sehrli ertak kitobi tayyor! Yuklab olib, maza qilib o'qing! 📖✨",
-            reply_markup=user_reorder_kb
-        )
-        await message.answer(f"✨ Ertak fayli `{client_id}` ID li mijozga muvaffaqiyatli jo'natildi!")
-    except Exception as e:
-        await message.answer(f"Faylni yuborishda xatolik: {e}")
     await state.clear()
 
-# --- MAIN RUNNER (BOTNING ISHGA TUSHISHI VA XABARLARNI USHLAB TURISHI) ---
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    asyncio.run(main())
+# --- RENDER PORT BINDING VA BOTNI ISHGA TUSHIRISH (FAQAT SHU BLOK QOLADI) ---
 import os
 from aiohttp import web
 
-# Render port xatoligini bermasligi uchun soxta veb-server yaratamiz
+# Render portni topishi va xato bermasligi uchun soxta sahifa
 async def handle(request):
-    return web.Response(text="Bot is running!")
+    return web.Response(text="Ertak Bot muvaffaqiyatli ishlamoqda!")
 
-app = web.Application()
-app.router.add_get('/', handle)
+async def on_startup_tasks(app):
+    # 1. Eski webhooklarni (kesh xabarlarni) tozalaymiz
+    await bot.delete_webhook(drop_pending_updates=True)
+    # 2. Botingizni orqa fonda (polling rejimida) ishga tushiramiz
+    asyncio.create_task(dp.start_polling(bot))
 
-# Botni ishga tushirish funksiyasini biroz o'zgartiramiz
-async def on_startup(dispatcher):
-    import asyncio
-    # Botni alohida fonda ishga tushiramiz
-    asyncio.create_task(dispatcher.start_polling(bot))
+async def init_app():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    app.on_startup.append(on_startup_tasks)
+    return app
 
 if __name__ == '__main__':
-    # Render beradigan portni aniqlaymiz, bo'lmasa 8080 portni oladi
-    port = int(os.environ.get("PORT", 8080))
-    
-    # aiogram botini start_polling orqali emas, veb-server bilan birga yuritamiz
-    from aiogram import Dispatcher
-    dp = Dispatcher() # O'zingizning dp obyektizdan foydalaning
-    
-    # Bu kod ham veb-portni ochadi, ham botni orqa fonda ishga tushiradi
-    web.run_app(app, host='0.0.0.0', port=port)
+    try:
+        # Render taqdim etadigan portni o'qib olamiz, bo'lmasa 8080 ni oladi
+        port = int(os.environ.get("PORT", 8080))
+        app = asyncio.run(init_app())
+        web.run_app(app, host='0.0.0.0', port=port)
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Bot to'xtatildi.")
