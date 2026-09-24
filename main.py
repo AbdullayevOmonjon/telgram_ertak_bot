@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, F, types
@@ -5,12 +6,12 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.storage.base import StorageKey
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InputMediaPhoto
+from aiohttp import web
 
 # --- SOZLAMALAR ---
 BOT_TOKEN = "8650992085:AAF4rp-9mJGibBJKNmZFLubf0kZJ63Cet4E"  # Bot tokeningiz
-ADMIN_ID = 6735904763  # Admin ID (Siz kiritgan yangi ID)
+ADMIN_ID = 6735904763  # Admin ID
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -178,93 +179,70 @@ async def get_story_idea(message: types.Message, state: FSMContext):
     except Exception:
         await bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=keyboard)
 
-# --- MIJOZDAN TO'LOV CHEKINI QABUL QILISH JRAYONI ---
+# --- MIJOZDAN TO'LOV CHEKINI QABUL QILISH JARAYONI ---
 @dp.message(ErtakBuyurtma.chek_kutish, F.photo | F.document)
 async def user_send_receipt(message: types.Message, state: FSMContext):
     user_data = await state.get_data()
-    client_name = user_data.get('user_name', message.from_user.full_name)
+    client_name = user_data.get('user_name', "Mijoz")
     
-    await state.clear()
-    await message.answer("✅ Chek qabul qilindi va adminga yuborildi! To'lov tasdiqlangach, ertak kitobingiz yuboriladi. ✨")
+    await message.answer("✅ To'lov chekingiz qabul qilindi! Admin tez orada uni tasdiqlaydi va sizga ertak kitobni yuboradi.")
     
-    admin_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📂 PDF Ertakni Yuklash", callback_data=f"sendpdf_{message.from_user.id}")]
-    ])
-    
-    caption_text = (
-        "🧾 **MIJOZDAN TO'LOV CHEKI KELDI!**\n\n"
-        f"👤 **Mijoz:** {client_name}\n"
-        f"🆔 **ID raqami:** `{message.from_user.id}`"
-    )
-    
+    admin_alert = f"💰 **Mijoz to'lov chekini yubordi!**\n👤 Foydalanuvchi: {client_name}\n🆔 ID: `{message.from_user.id}`"
     if message.photo:
-        await bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=caption_text, reply_markup=admin_keyboard)
+        await bot.send_photo(chat_id=ADMIN_ID, photo=message.photo[-1].file_id, caption=admin_alert)
     elif message.document:
-        await bot.send_document(chat_id=ADMIN_ID, document=message.document.file_id, caption=caption_text, reply_markup=admin_keyboard)
+        await bot.send_document(chat_id=ADMIN_ID, document=message.document.file_id, caption=admin_alert)
+        
+    await state.clear()
 
-# --- ADMIN PROCESSORS ---
+# --- ADMIN TUGLMALARI BILAN ISHLASH ---
 @dp.callback_query(F.data.startswith("pay_"))
 async def admin_ask_payment(call: types.CallbackQuery, state: FSMContext):
     client_id = int(call.data.split("_")[1])
     await state.update_data(target_client_id=client_id)
+    await call.message.answer(f"✍️ `{client_id}` ID li mijozga yuboriladigan narx va karta ma'lumotlarini kiriting:\n*(Masalan: Ertak tayyor. Narxi 50,000 so'm. Karta: 8600...)*")
     await state.set_state(AdminJavob.narx_kutish)
-    await call.message.answer(f"✍️ ` [{client_id}] ` ID li mijoz uchun **ertak narxi va karta raqamini** qo'lda yozib yuboring:")
     await call.answer()
 
-@dp.message(AdminJavob.narx_kutish, F.text)
-async def admin_send_custom_payment(message: types.Message, state: FSMContext):
-    admin_data = await state.get_data()
-    client_id = admin_data['target_client_id']
-    custom_text = message.text
+@dp.message(AdminJavob.narx_kutish)
+async def admin_send_price_to_user(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    client_id = data['target_client_id']
     
-    try:
-        await dp.fsm.get_context(bot=bot, chat_id=client_id, user_id=client_id).set_state(ErtakBuyurtma.chek_kutish)
-        await bot.send_message(chat_id=client_id, text=custom_text)
-        await message.answer(f"✅ Mijozga to'lov ma'lumotlari yuborildi va bot undan chek kutmoqda.")
-    except Exception as e:
-        await message.answer(f"Mijozga yuborishda xatolik yuz berdi: {e}")
-    await state.clear()
-
-@dp.callback_query(F.data.startswith("sendpdf_"))
-async def admin_prepare_pdf(call: types.CallbackQuery, state: FSMContext):
-    client_id = int(call.data.split("_")[1])
-    
-    client_state = dp.fsm.get_context(bot=bot, chat_id=client_id, user_id=client_id)
-    client_data = await client_state.get_data()
-    client_name = client_data.get('user_name', f"ID: {client_id}")
-
-    await state.update_data(target_client_id=client_id)
-    await state.set_state(AdminJavob.pdf_kutish)
-    await call.message.answer(f"📁 Iltimos, **{client_name}** uchun tayyorlangan ertak kitobining **PDF faylini** botga yuklang:")
-    await call.answer()
-
-    await state.clear()
-
-# --- RENDER PORT BINDING VA BOTNI ISHGA TUSHIRISH (FAQAT SHU BLOK QOLADI) ---
+    # Mijozning FSM holatini chek kutishga o'tkazamiz
+   # --- RENDER PORT BINDING VA BOTNI ISHGA TUSHIRISH (FAQAT SHU BLOK QOLADI) ---
 import os
 from aiohttp import web
 
-# Render portni topishi va xato bermasligi uchun soxta sahifa
+# Render port xatoligini bermasligi uchun soxta veb-server sahifasi
 async def handle(request):
     return web.Response(text="Ertak Bot muvaffaqiyatli ishlamoqda!")
 
-async def on_startup_tasks(app):
-    # 1. Eski webhooklarni (kesh xabarlarni) tozalaymiz
+# BOTNI VA SERVERNI ISHGA TUSHIRADIGAN ASOSIY MAIN FUNKSIYA
+async def main():
+    # 1. Eski webhooklarni tozalaymiz
     await bot.delete_webhook(drop_pending_updates=True)
+    
     # 2. Botingizni orqa fonda (polling rejimida) ishga tushiramiz
     asyncio.create_task(dp.start_polling(bot))
-
-async def init_app():
+    
+    # 3. Render kutayotgan veb-serverni port bilan birga sozlaymiz
     app = web.Application()
     app.router.add_get('/', handle)
-    app.on_startup.append(on_startup_tasks)
-    return app
+    
+    # Render taqdim etadigan portni o'qib olamiz, bo'lmasa 8080 ni oladi
+    port = int(os.environ.get("PORT", 8080))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    # Server va bot doimiy ishlab turishi uchun cheksiz kutish rejimiga qo'yamiz
+    await asyncio.Event().wait()
 
 if __name__ == '__main__':
     try:
-        # Render taqdim etadigan portni o'qib olamiz, bo'lmasa 8080 ni oladi
-        port = int(os.environ.get("PORT", 8080))
-        app = asyncio.run(init_app())
-        web.run_app(app, host='0.0.0.0', port=port)
+        # Asosiy main funksiyasini ishga tushiramiz
+        asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logging.info("Bot to'xtatildi.")
